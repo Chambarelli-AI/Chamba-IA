@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -27,6 +29,9 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+// Enum para o estado da leitura do TTS
+enum TtsState { stopped, playing, paused }
+
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -34,19 +39,75 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-@override
 class _ChatScreenState extends State<ChatScreen> {
+  final String _geminiApiKey = 'AIzaSyDSJCm2A5jNeWSnxiW0IJT14huBdORDNoM';
+
   final TextEditingController _textController = TextEditingController();
-  final List<String> _messages = [];
+  final List<Map<String, String>> _messages = [];
   bool _isInitialScreen = true;
   late SharedPreferences _prefs;
   List<Map<String, dynamic>> _conversations = [];
   int _currentConversationIndex = -1;
 
+  late FlutterTts flutterTts;
+  TtsState ttsState = TtsState.stopped;
+  int? _isReadingIndex; // Rastreia o índice da mensagem sendo lida
+
   @override
   void initState() {
     super.initState();
     _loadConversations();
+    _initTts();
+  }
+
+  // Função para inicializar o motor de TTS
+  Future<void> _initTts() async {
+    flutterTts = FlutterTts();
+    await flutterTts.setLanguage("pt-BR");
+    await flutterTts.setSpeechRate(1.5);
+
+    // Definindo os callbacks para rastrear o estado da leitura
+    flutterTts.setStartHandler(() {
+      setState(() {
+        ttsState = TtsState.playing;
+      });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      setState(() {
+        ttsState = TtsState.stopped;
+        _isReadingIndex = null;
+      });
+    });
+
+    flutterTts.setCancelHandler(() {
+      setState(() {
+        ttsState = TtsState.stopped;
+        _isReadingIndex = null;
+      });
+    });
+
+    flutterTts.setPauseHandler(() {
+      setState(() {
+        ttsState = TtsState.paused;
+      });
+    });
+  }
+
+  // Função para alternar entre ler, pausar e continuar a leitura
+  Future<void> _toggleSpeakPause(String text, int index) async {
+    if (ttsState == TtsState.playing && _isReadingIndex == index) {
+      await flutterTts.pause();
+    } else if (ttsState == TtsState.paused && _isReadingIndex == index) {
+      await flutterTts.speak(text);
+    } else {
+      // Se estiver lendo outra mensagem ou parado, para o TTS e começa a ler a nova mensagem
+      await flutterTts.stop();
+      setState(() {
+        _isReadingIndex = index;
+      });
+      await flutterTts.speak(text);
+    }
   }
 
   Future<void> _loadConversations() async {
@@ -59,7 +120,13 @@ class _ChatScreenState extends State<ChatScreen> {
           .toList();
       if (_conversations.isNotEmpty) {
         _currentConversationIndex = 0;
-        _messages.addAll(List<String>.from(_conversations[0]['messages']));
+        _messages.addAll(
+          List<Map<String, String>>.from(
+            _conversations[0]['messages'].map(
+              (msg) => Map<String, String>.from(msg),
+            ),
+          ),
+        );
         _isInitialScreen = _messages.isEmpty;
       }
     });
@@ -72,7 +139,44 @@ class _ChatScreenState extends State<ChatScreen> {
     await _prefs.setStringList('conversations', jsonConversations);
   }
 
-  void _handleSubmitted(String text) {
+  Future<String> _getGeminiResponse(String prompt) async {
+    const String apiUrl =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+
+    final Map<String, dynamic> requestBody = {
+      "contents": [
+        {
+          "parts": [
+            {"text": prompt},
+          ],
+        },
+      ],
+      "tools": [
+        {"google_search": {}},
+      ],
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse("$apiUrl?key=$_geminiApiKey"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(requestBody),
+      );
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        final String generatedText =
+            jsonResponse['candidates'][0]['content']['parts'][0]['text'];
+        return generatedText;
+      } else {
+        return "Desculpe, o CHAMBA-IA não conseguiu responder no momento. Código de erro: ${response.statusCode}";
+      }
+    } catch (e) {
+      return "Ocorreu um erro: $e";
+    }
+  }
+
+  void _handleSubmitted(String text) async {
     if (text.trim().isEmpty) {
       return;
     }
@@ -80,12 +184,30 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isInitialScreen) {
       _startNewConversation();
     }
+
     _textController.clear();
+
     setState(() {
-      _messages.add(text);
+      _messages.add({'text': text, 'sender': 'user'});
       _isInitialScreen = false;
-      _conversations[_currentConversationIndex]['messages'].add(text);
+      _conversations[_currentConversationIndex]['messages'].add({
+        'text': text,
+        'sender': 'user',
+      });
     });
+
+    _saveConversations();
+
+    final String aiResponse = await _getGeminiResponse(text);
+
+    setState(() {
+      _messages.add({'text': aiResponse, 'sender': 'ai'});
+      _conversations[_currentConversationIndex]['messages'].add({
+        'text': aiResponse,
+        'sender': 'ai',
+      });
+    });
+
     _saveConversations();
   }
 
@@ -119,7 +241,13 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _currentConversationIndex = index;
       _messages.clear();
-      _messages.addAll(List<String>.from(_conversations[index]['messages']));
+      _messages.addAll(
+        List<Map<String, String>>.from(
+          _conversations[index]['messages'].map(
+            (msg) => Map<String, String>.from(msg),
+          ),
+        ),
+      );
       _isInitialScreen = _messages.isEmpty;
     });
     Navigator.of(context).pop();
@@ -132,8 +260,8 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: const Color(0xFF2E2E38),
         child: ListView(
           children: [
-            DrawerHeader(
-              decoration: const BoxDecoration(color: Colors.white10),
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Colors.white10),
               child: Text(
                 'Histórico',
                 style: TextStyle(
@@ -159,15 +287,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       appBar: AppBar(
         backgroundColor: const Color(0xFF2E2E38),
-        // Cor de fundo da AppBar
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
         title: Center(
-          child: Image.asset(
-            'assets/images/logo_darkmode.png',
-            width: 40,
-            //height: 150,
-          ),
+          child: Image.asset('assets/images/logo_darkmode.png', width: 40),
         ),
         leading: Builder(
           builder: (context) {
@@ -184,19 +307,6 @@ class _ChatScreenState extends State<ChatScreen> {
           },
         ),
         actions: [
-          /*
-          IconButton(
-            icon: const Icon(
-              Icons.nightlight_round,
-              color: Colors.white,
-              size: 24,
-            ),
-            onPressed: () {
-              // TODO: Alternar modo noturno
-            },
-          ),
-          */
-          //Botão: Deletar conversa
           IconButton(
             icon: const Icon(
               Icons.delete_outline,
@@ -205,7 +315,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             onPressed: _clearChat,
           ),
-          // Botão: Nova Conversa
           TextButton(
             onPressed: _startNewConversation,
             child: const Text(
@@ -218,7 +327,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-
       body: Stack(
         children: [
           if (_isInitialScreen)
@@ -258,23 +366,68 @@ class _ChatScreenState extends State<ChatScreen> {
                 right: 16.0,
               ),
               reverse: false,
-              // Isso faz com que a lista role para baixo por padrão
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final message = _messages[index];
+                final bool isUserMessage = message['sender'] == 'user';
+                final bool isThisMessagePlaying =
+                    _isReadingIndex == index && ttsState == TtsState.playing;
+                final bool isThisMessagePaused =
+                    _isReadingIndex == index && ttsState == TtsState.paused;
+
                 return Align(
-                  alignment: Alignment.centerRight, // Mensagem do usuário
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4.0),
-                    padding: const EdgeInsets.all(12.0),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6B6BCF),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      message,
-                      style: const TextStyle(color: Colors.white),
-                    ),
+                  alignment: isUserMessage
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Ícone de TTS para mensagens da IA
+                      if (!isUserMessage)
+                        IconButton(
+                          onPressed: () =>
+                              _toggleSpeakPause(message['text']!, index),
+                          icon: Icon(
+                            isThisMessagePlaying
+                                ? Icons.pause_circle_filled
+                                : (isThisMessagePaused
+                                      ? Icons.play_circle_filled
+                                      : Icons.volume_up),
+                            color: Colors.white,
+                          ),
+                        ),
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4.0),
+                        padding: const EdgeInsets.all(12.0),
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isUserMessage
+                              ? const Color(0xFF6B6BCF)
+                              : const Color(0xFF5D5D6E),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          message['text']!,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      // Ícone de TTS para mensagens do usuário
+                      if (isUserMessage)
+                        IconButton(
+                          onPressed: () =>
+                              _toggleSpeakPause(message['text']!, index),
+                          icon: Icon(
+                            isThisMessagePlaying
+                                ? Icons.pause_circle_filled
+                                : (isThisMessagePaused
+                                      ? Icons.play_circle_filled
+                                      : Icons.volume_up),
+                            color: Colors.white,
+                          ),
+                        ),
+                    ],
                   ),
                 );
               },
