@@ -142,14 +142,12 @@ class _ChatScreenState extends State<ChatScreen> {
     await _prefs.setStringList('conversations', jsonConversations);
   }
 
-  // A função agora recebe o histórico completo da conversa.
   Future<String> _getGeminiResponse(
     List<Map<String, String>> conversationHistory,
   ) async {
     const String apiUrl =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
-    // Mapeia o histórico para o formato da API.
     final List<Map<String, dynamic>> contents = conversationHistory.map((msg) {
       return {
         "role": msg['sender'] == 'user' ? 'user' : 'model',
@@ -179,7 +177,7 @@ class _ChatScreenState extends State<ChatScreen> {
             jsonResponse['candidates'][0]['content']['parts'][0]['text'];
         return generatedText;
       } else {
-        return "Desculpe, o CHAMBA-IA não conseguiu responder no momento. \nCódigo de erro: ${response.statusCode}";
+        return "Desculpe, o CHAMBA-IA não conseguiu responder no momento. Código de erro: ${response.statusCode}";
       }
     } catch (e) {
       return "Ocorreu um erro: $e";
@@ -191,6 +189,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // A nova conversa só é iniciada quando a primeira mensagem é enviada
     if (_isInitialScreen) {
       _startNewConversation();
     }
@@ -205,9 +204,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _isGenerating = true;
     });
 
-    final int aiMessageIndex = _messages.length - 1;
+    // Se o nome da conversa ainda é o padrão, atualiza com a primeira mensagem do usuário.
+    if (_conversations[_currentConversationIndex]['name'].startsWith(
+      'Conversa #',
+    )) {
+      final String conversationTitle = text.length > 30
+          ? '${text.substring(0, 30)}...'
+          : text;
+      setState(() {
+        _conversations[_currentConversationIndex]['name'] = conversationTitle;
+      });
+    }
 
-    // Obtém o histórico para enviar para a IA.
+    final int aiMessageIndex = _messages.length - 1;
     final List<Map<String, String>> contextMessages = List.from(_messages);
     final String aiFullResponse = await _getGeminiResponse(contextMessages);
 
@@ -222,7 +231,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _isGenerating = false;
-      // Adiciona o histórico completo à conversa salva.
       _conversations[_currentConversationIndex]['messages'] = List.from(
         _messages,
       );
@@ -231,18 +239,27 @@ class _ChatScreenState extends State<ChatScreen> {
     _saveConversations();
   }
 
-  void _clearChat() {
+  // Limpa a tela de chat para começar uma nova conversa
+  void _startNewChat() {
     setState(() {
       _messages.clear();
       _isInitialScreen = true;
-      if (_currentConversationIndex != -1) {
-        _conversations.removeAt(_currentConversationIndex);
-        _currentConversationIndex = -1;
-      }
+      _currentConversationIndex = -1;
     });
-    _saveConversations();
   }
 
+  // Apaga a conversa atual do histórico
+  void _deleteCurrentConversation() {
+    if (_currentConversationIndex != -1) {
+      setState(() {
+        _conversations.removeAt(_currentConversationIndex);
+      });
+      _saveConversations();
+      _startNewChat();
+    }
+  }
+
+  // Função para criar um novo objeto de conversa e adicioná-lo à lista
   void _startNewConversation() {
     final newConversation = {
       'name': 'Conversa #${_conversations.length + 1}',
@@ -333,10 +350,12 @@ class _ChatScreenState extends State<ChatScreen> {
               color: Colors.white,
               size: 24,
             ),
-            onPressed: _clearChat,
+            // Chama a nova função para apagar a conversa atual
+            onPressed: _deleteCurrentConversation,
           ),
           TextButton(
-            onPressed: _startNewConversation,
+            // Agora, o botão de "Nova Conversa" apenas limpa a tela para começar um novo chat
+            onPressed: _startNewChat,
             child: const Text(
               'Nova Conversa',
               style: TextStyle(
