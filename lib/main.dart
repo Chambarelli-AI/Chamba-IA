@@ -48,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late SharedPreferences _prefs;
   List<Map<String, dynamic>> _conversations = [];
   int _currentConversationIndex = -1;
+  bool _isGenerating = false; // Estado para controlar a simulação de streaming
 
   late FlutterTts flutterTts;
   TtsState ttsState = TtsState.stopped;
@@ -96,12 +97,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Função para alternar entre ler, pausar e continuar a leitura
   Future<void> _toggleSpeakPause(String text, int index) async {
+    // Impede a leitura enquanto a IA está gerando a resposta
+    if (_isGenerating) return;
+
     if (ttsState == TtsState.playing && _isReadingIndex == index) {
       await flutterTts.pause();
     } else if (ttsState == TtsState.paused && _isReadingIndex == index) {
       await flutterTts.speak(text);
     } else {
-      // Se estiver lendo outra mensagem ou parado, para o TTS e começa a ler a nova mensagem
       await flutterTts.stop();
       setState(() {
         _isReadingIndex = index;
@@ -169,7 +172,7 @@ class _ChatScreenState extends State<ChatScreen> {
             jsonResponse['candidates'][0]['content']['parts'][0]['text'];
         return generatedText;
       } else {
-        return "Desculpe, o CHAMBA-IA não conseguiu responder no momento. Código de erro: ${response.statusCode}";
+        return "Desculpe, a CHAMBA-IA não conseguiu responder no momento. Código de erro: ${response.statusCode}";
       }
     } catch (e) {
       return "Ocorreu um erro: $e";
@@ -177,7 +180,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleSubmitted(String text) async {
-    if (text.trim().isEmpty) {
+    if (text.trim().isEmpty || _isGenerating) {
       return;
     }
 
@@ -189,21 +192,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _messages.add({'text': text, 'sender': 'user'});
+      _messages.add({
+        'text': '',
+        'sender': 'ai',
+      }); // Adiciona uma mensagem vazia para a IA
       _isInitialScreen = false;
+      _isGenerating = true;
+    });
+
+    final int aiMessageIndex = _messages.length - 1;
+    final String aiFullResponse = await _getGeminiResponse(text);
+
+    // Simulação do streaming: adiciona a resposta caractere por caractere
+    for (int i = 0; i < aiFullResponse.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 10));
+      setState(() {
+        _messages[aiMessageIndex]['text'] =
+            (_messages[aiMessageIndex]['text'] ?? '') + aiFullResponse[i];
+      });
+    }
+
+    setState(() {
+      _isGenerating = false;
       _conversations[_currentConversationIndex]['messages'].add({
         'text': text,
         'sender': 'user',
       });
-    });
-
-    _saveConversations();
-
-    final String aiResponse = await _getGeminiResponse(text);
-
-    setState(() {
-      _messages.add({'text': aiResponse, 'sender': 'ai'});
       _conversations[_currentConversationIndex]['messages'].add({
-        'text': aiResponse,
+        'text': aiFullResponse,
         'sender': 'ai',
       });
     });
