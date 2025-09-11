@@ -142,18 +142,25 @@ class _ChatScreenState extends State<ChatScreen> {
     await _prefs.setStringList('conversations', jsonConversations);
   }
 
-  Future<String> _getGeminiResponse(String prompt) async {
+  // A função agora recebe o histórico completo da conversa.
+  Future<String> _getGeminiResponse(
+    List<Map<String, String>> conversationHistory,
+  ) async {
     const String apiUrl =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
 
+    // Mapeia o histórico para o formato da API.
+    final List<Map<String, dynamic>> contents = conversationHistory.map((msg) {
+      return {
+        "role": msg['sender'] == 'user' ? 'user' : 'model',
+        "parts": [
+          {"text": msg['text']},
+        ],
+      };
+    }).toList();
+
     final Map<String, dynamic> requestBody = {
-      "contents": [
-        {
-          "parts": [
-            {"text": prompt},
-          ],
-        },
-      ],
+      "contents": contents,
       "tools": [
         {"google_search": {}},
       ],
@@ -172,7 +179,7 @@ class _ChatScreenState extends State<ChatScreen> {
             jsonResponse['candidates'][0]['content']['parts'][0]['text'];
         return generatedText;
       } else {
-        return "Desculpe, a CHAMBA-IA não conseguiu responder no momento. Código de erro: ${response.statusCode}";
+        return "Desculpe, o CHAMBA-IA não conseguiu responder no momento. \nCódigo de erro: ${response.statusCode}";
       }
     } catch (e) {
       return "Ocorreu um erro: $e";
@@ -190,18 +197,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _textController.clear();
 
+    // Adiciona a mensagem do usuário e uma mensagem vazia da IA antes da requisição.
     setState(() {
       _messages.add({'text': text, 'sender': 'user'});
-      _messages.add({
-        'text': '',
-        'sender': 'ai',
-      }); // Adiciona uma mensagem vazia para a IA
+      _messages.add({'text': '', 'sender': 'ai'});
       _isInitialScreen = false;
       _isGenerating = true;
     });
 
     final int aiMessageIndex = _messages.length - 1;
-    final String aiFullResponse = await _getGeminiResponse(text);
+
+    // Obtém o histórico para enviar para a IA.
+    final List<Map<String, String>> contextMessages = List.from(_messages);
+    final String aiFullResponse = await _getGeminiResponse(contextMessages);
 
     // Simulação do streaming: adiciona a resposta caractere por caractere
     for (int i = 0; i < aiFullResponse.length; i++) {
@@ -214,14 +222,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _isGenerating = false;
-      _conversations[_currentConversationIndex]['messages'].add({
-        'text': text,
-        'sender': 'user',
-      });
-      _conversations[_currentConversationIndex]['messages'].add({
-        'text': aiFullResponse,
-        'sender': 'ai',
-      });
+      // Adiciona o histórico completo à conversa salva.
+      _conversations[_currentConversationIndex]['messages'] = List.from(
+        _messages,
+      );
     });
 
     _saveConversations();
