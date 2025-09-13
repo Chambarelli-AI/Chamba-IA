@@ -3,10 +3,19 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+
+void main() async {
   runApp(const MyApp());
 }
+
+/*
+Future<void> main() async {
+  await dotenv.load(fileName: ".env");
+  runApp(const MyApp());
+}
+*/
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
@@ -40,6 +49,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  //final String _geminiApiKey = dotenv.env['GEMINI_API_KEY']!;
   final String _geminiApiKey = 'AIzaSyDSJCm2A5jNeWSnxiW0IJT14huBdORDNoM';
 
   final TextEditingController _textController = TextEditingController();
@@ -65,7 +75,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initTts() async {
     flutterTts = FlutterTts();
     await flutterTts.setLanguage("pt-BR");
-    await flutterTts.setSpeechRate(1.5);
+    await flutterTts.setSpeechRate(1);
 
     // Definindo os callbacks para rastrear o estado da leitura
     flutterTts.setStartHandler(() {
@@ -326,9 +336,6 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: const Color(0xFF2E2E38),
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
-        title: Center(
-          child: Image.asset('assets/images/logo_darkmode.png', width: 40),
-        ),
         leading: Builder(
           builder: (context) {
             return IconButton(
@@ -385,11 +392,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildModeButton('Modo Inclusivo', true),
-                      const SizedBox(width: 10),
-                      _buildModeButton('Modo Libras', false),
-                    ],
+                    children: [_buildModeButton('Modo Libras', false)],
                   ),
                   const SizedBox(height: 15),
                   _buildStartConversationButton(),
@@ -530,18 +533,25 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildStartConversationButton() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF5D5D6E),
-        borderRadius: BorderRadius.circular(25),
-      ),
-      child: const Text(
-        'Comece a Conversar !',
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
-          fontSize: 14,
+    return InkWell(
+      onTap: () {
+        _handleSubmitted(
+          _textController.text.isEmpty ? 'Olá, Chamba-IA' : _textController.text,
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF5D5D6E),
+          borderRadius: BorderRadius.circular(25),
+        ),
+        child: const Text(
+          'Comece a Conversar !',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+          ),
         ),
       ),
     );
